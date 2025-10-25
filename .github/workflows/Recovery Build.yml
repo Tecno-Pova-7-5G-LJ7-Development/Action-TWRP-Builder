@@ -70,4 +70,4 @@ jobs:
       uses: actions/upload-artifact@v3
       with:
         name: twrp-recovery-$LJ7
-        path: platform_manifest_twrp_omni/out/target/product/$LJ7/recovery.img
+        path: out/target/product/LJ7/vendor_boot.img
