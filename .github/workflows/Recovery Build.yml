@@ -1,185 +1,73 @@
-name: TWRP Recovery Builder
+name: Build TWRP Recovery
 
 on:
-  push:
-    branches: [ main, master, develop ]
-  pull_request:
-    branches: [ main, master, develop ]
   workflow_dispatch:
     inputs:
-      device_codename:
-        description: 'Device codename'
+      device_name:
+        description: 'Device Name'
         required: true
-        default: 'Tecno-LG7n'
-      build_type:
-        description: 'Build type'
-        required: false
-        default: 'userdebug'
-        type: choice
-        options:
-        - user
-        - userdebug
-        - eng
+        default: 'Tecno-LJ7'
+      device_code:
+        description: 'Device Code'
+        required: true
+        default: 'LJ7'
 
 env:
-  CCACHE_DIR: /tmp/ccache
+  DEVICE: LJ7
 
 jobs:
-  setup:
-    runs-on: ubuntu-latest
-    outputs:
-      device-codename: ${{ steps.set-device.outputs.device }}
-      build-type: ${{ steps.set-build-type.outputs.type }}
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Set device codename
-      id: set-device
-      run: |
-        DEVICE="${{ github.event.inputs.device_codename || 'Tecno-LG7n' }}"
-        echo "device=$DEVICE" >> $GITHUB_OUTPUT
-        echo "Building for device: $DEVICE"
-
-    - name: Set build type
-      id: set-build-type
-      run: |
-        BUILD_TYPE="${{ github.event.inputs.build_type || 'userdebug' }}"
-        echo "type=$BUILD_TYPE" >> $GITHUB_OUTPUT
-        echo "Build type: $BUILD_TYPE"
-
   build:
     runs-on: ubuntu-latest
-    needs: setup
-    strategy:
-      matrix:
-        arch: [aarch64]
     
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Setup environment
-      run: |
-        echo "DEVICE_CODENAME=${{ needs.setup.outputs.device-codename }}" >> $GITHUB_ENV
-        echo "BUILD_TYPE=${{ needs.setup.outputs.build-type }}" >> $GITHUB_ENV
-
-    - name: Install dependencies
+    - name: Checkout
+      uses: actions/checkout@v3
+      
+    - name: Set up environment
       run: |
         sudo apt-get update
-        sudo apt-get install -y \
-            git-core \
-            gnupg \
-            flex \
-            bison \
-            build-essential \
-            zip \
-            curl \
-            zlib1g-dev \
-            gcc-multilib \
-            g++-multilib \
-            libc6-dev-i386 \
-            libncurses6 \
-            libncurses5-dev \
-            x11proto-core-dev \
-            libx11-dev \
-            lib32z1-dev \
-            lib32z-dev \
-            liblz4-tool \
-            libgl1-mesa-dev \
-            libxml2-utils \
-            xsltproc \
-            unzip \
-            fontconfig \
-            ccache \
-            python3 \
-            python3-pip \
-            openjdk-11-jdk \
-            rsync \
-            schedtool \
-            libssl-dev \
-            bc \
-            file
+        sudo apt-get install -y git openjdk-8-jdk android-tools-adb bc bison \
+        build-essential curl flex g++-multilib gcc-multilib gnupg gperf \
+        imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev \
+        liblz4-tool libncurses5-dev libsdl1.2-dev libssl-dev \
+        libwxgtk3.0-gtk3-dev libxml2 libxml2-utils lzop pngcrush \
+        rsync schedtool squashfs-tools xsltproc zip zlib1g-dev
 
-    - name: Setup ccache
-      uses: hendrikmuhs/ccache-action@v1.2
-      with:
-        key: twrp-${{ needs.setup.outputs.device-codename }}-${{ github.sha }}
-        restore-keys: |
-          twrp-${{ needs.setup.outputs.device-codename }}-
-          twrp-
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-
-    - name: Prepare build environment
+      - name: Install repo
       run: |
-        export LC_ALL=C
-        export ALLOW_MISSING_DEPENDENCIES=true
-        export TW_DEVICE_VERSION=${{ needs.setup.outputs.device-codename }}
+        mkdir ~/bin
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        chmod a+x ~/bin/repo
+        sudo ln -sf ~/bin/repo /usr/bin/repo
+
+      - name: Initialize repo
+      run: |
+        git config --global user.name "Nico170420"
+        git config --global user.email "b170420nc@gmail.com"
         
-        # Initialize build environment
+      id: pwd
+    - name: Clone TWRP source
+      run: |
+        mkdir TWRP
+        cd TWRP
+        repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b twrp-12.1
+        repo sync        
+        
+    - name: Clone device tree
+      run: |
+        git clone https://github.com/Tecno-Pova-7-5G-LJ7-Development/device-tecno-lj7-twrp -b main ./device/tecno/LJ7
+        
+    - name: Initialize TWRP build
+      run: |
         source build/envsetup.sh
+        lunch twrp_LJ7-eng
         
-        # Lunch device
-        lunch omni_${{ needs.setup.outputs.device-codename }}-${{ needs.setup.outputs.build-type }}
-        
-        echo "Build environment prepared for ${{ needs.setup.outputs.device-codename }}"
-
-    - name: Build recovery image
+    - name: Build TWRP
       run: |
-        export CCACHE_DIR=/tmp/ccache
-        export USE_CCACHE=1
-        export CCACHE_EXEC=/usr/bin/ccache
+        mka vendorbootimage
         
-        # Build only recovery image
-        make -j$(nproc) recoveryimage
-        
-        echo "Build completed successfully"
-
-    - name: List output files
-      run: |
-        find . -name "*.img" -type f | head -10
-        find out/target/product/${{ needs.setup.outputs.device-codename }}/ -name "recovery.img" -o -name "*.zip" | head -10
-
     - name: Upload recovery image
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v3
       with:
-        name: twrp-recovery-${{ needs.setup.outputs.device-codename }}
-        path: |
-          out/target/product/${{ needs.setup.outputs.device-codename }}/recovery.img
-          out/target/product/${{ needs.setup.outputs.device-codename }}/*.zip
-        retention-days: 7
-        if-no-files-found: warn
-
-    - name: Show build info
-      run: |
-        echo "=== BUILD COMPLETED ==="
-        echo "Device: ${{ needs.setup.outputs.device-codename }}"
-        echo "Build type: ${{ needs.setup.outputs.build-type }}"
-        echo "Workflow: ${{ github.workflow }}"
-        echo "Triggered by: ${{ github.event_name }}"
-        echo "Commit: ${{ github.sha }}"
-
-  notify:
-    runs-on: ubuntu-latest
-    needs: [setup, build]
-    if: always()
-    
-    steps:
-    - name: Build status
-      run: |
-        if [ "${{ needs.build.result }}" == "success" ]; then
-          echo "✅ Build completed successfully!"
-          echo "Device: ${{ needs.setup.outputs.device-codename }}"
-          echo "Artifacts are available for download"
-        else
-          echo "❌ Build failed"
-          echo "Check the build logs for details"
-        fi
+        name: twrp-recovery-$LJ7
+        path: platform_manifest_twrp_omni/out/target/product/$LJ7/recovery.img
