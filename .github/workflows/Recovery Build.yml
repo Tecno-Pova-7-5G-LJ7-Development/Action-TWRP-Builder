@@ -53,6 +53,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: setup
+    strategy:
+      matrix:
+        arch: [aarch64]
     
     steps:
     - name: Checkout repository
@@ -60,12 +63,12 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Setup environment variables
+    - name: Setup environment
       run: |
         echo "DEVICE_CODENAME=${{ needs.setup.outputs.device-codename }}" >> $GITHUB_ENV
         echo "BUILD_TYPE=${{ needs.setup.outputs.build-type }}" >> $GITHUB_ENV
 
-    - name: Install dependencies (Updated for Ubuntu 22.04)
+    - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -80,28 +83,17 @@ jobs:
             gcc-multilib \
             g++-multilib \
             libc6-dev-i386 \
-            libncurses6 \
-            libncurses6-dev \
-            libncurses5-dev \
+            libncurses5 \
+            lib32ncurses5-dev \
             x11proto-core-dev \
             libx11-dev \
             lib32z1-dev \
-            lib32z-dev \
-            liblz4-tool \
             libgl1-mesa-dev \
             libxml2-utils \
             xsltproc \
             unzip \
             fontconfig \
-            ccache \
-            python3 \
-            python3-pip \
-            openjdk-11-jdk \
-            rsync \
-            schedtool \
-            libssl-dev \
-            bc \
-            file
+            ccache
 
     - name: Setup ccache
       uses: hendrikmuhs/ccache-action@v1.2
@@ -116,35 +108,11 @@ jobs:
       with:
         python-version: '3.9'
 
-    - name: Create necessary directories
-      run: |
-        mkdir -p out/target/product/${{ needs.setup.outputs.device-codename }}
-        mkdir -p kernel/tecno/${{ needs.setup.outputs.device-codename }}
-
     - name: Prepare build environment
       run: |
         export LC_ALL=C
         export ALLOW_MISSING_DEPENDENCIES=true
         export TW_DEVICE_VERSION=${{ needs.setup.outputs.device-codename }}
-        
-        # Create dummy envsetup.sh if it doesn't exist
-        if [ ! -f "build/envsetup.sh" ]; then
-          echo "Creating dummy build environment..."
-          mkdir -p build
-          cat > build/envsetup.sh << 'EOF'
-#!/bin/bash
-function lunch() {
-  echo "Lunch function called with: $1"
-  export TARGET_DEVICE=$(echo $1 | cut -d'_' -f2 | cut -d'-' -f1)
-  echo "TARGET_DEVICE set to: $TARGET_DEVICE"
-}
-function mka() {
-  echo "Build command: $@"
-  make -j$(nproc) "$@"
-}
-EOF
-          chmod +x build/envsetup.sh
-        fi
         
         # Initialize build environment
         source build/envsetup.sh
@@ -154,45 +122,29 @@ EOF
         
         echo "Build environment prepared for ${{ needs.setup.outputs.device-codename }}"
 
-    - name: Check build system structure
-      run: |
-        echo "=== Directory Structure ==="
-        find . -type d -name "*.mk" -o -name "*.sh" | head -20
-        echo ""
-        echo "=== Build files ==="
-        ls -la build/ 2>/dev/null || echo "No build directory"
-        echo ""
-        echo "=== Device tree ==="
-        find . -name "*.dts" -o -name "*.dtb" | head -10
-
-    - name: Build recovery image (Test mode)
+    - name: Build recovery image
       run: |
         export CCACHE_DIR=/tmp/ccache
         export USE_CCACHE=1
         export CCACHE_EXEC=/usr/bin/ccache
         
-        echo "Starting build process..."
+        # Build only recovery image
+        make -j$(nproc) recoveryimage
         
-        # Create dummy recovery image for testing
-        mkdir -p out/target/product/${{ needs.setup.outputs.device-codename }}
-        echo "Dummy recovery image for ${{ needs.setup.outputs.device-codename }}" > out/target/product/${{ needs.setup.outputs.device-codename }}/recovery.img
-        echo "Build simulation completed"
-        
-        # Show what would be built
-        echo "Build artifacts:"
-        find out/target/product/${{ needs.setup.outputs.device-codename }}/ -type f 2>/dev/null || echo "No artifacts found"
+        echo "Build completed successfully"
 
     - name: List output files
       run: |
-        echo "=== Generated files ==="
-        find out/ -type f -name "*.img" -o -name "*.zip" 2>/dev/null | head -20 || echo "No output files found"
+        find . -name "*.img" -type f | head -10
+        find out/target/product/${{ needs.setup.outputs.device-codename }}/ -name "recovery.img" -o -name "*.zip" | head -10
 
     - name: Upload recovery image
       uses: actions/upload-artifact@v4
       with:
         name: twrp-recovery-${{ needs.setup.outputs.device-codename }}
         path: |
-          out/target/product/${{ needs.setup.outputs.device-codename }}/
+          out/target/product/${{ needs.setup.outputs.device-codename }}/recovery.img
+          out/target/product/${{ needs.setup.outputs.device-codename }}/*.zip
         retention-days: 7
         if-no-files-found: warn
 
@@ -204,7 +156,6 @@ EOF
         echo "Workflow: ${{ github.workflow }}"
         echo "Triggered by: ${{ github.event_name }}"
         echo "Commit: ${{ github.sha }}"
-        echo "Runner OS: ${{ runner.os }}"
 
   notify:
     runs-on: ubuntu-latest
@@ -218,10 +169,7 @@ EOF
           echo "✅ Build completed successfully!"
           echo "Device: ${{ needs.setup.outputs.device-codename }}"
           echo "Artifacts are available for download"
-        elif [ "${{ needs.build.result }}" == "failure" ]; then
-          echo "❌ Build failed"
-          echo "Device: ${{ needs.setup.outputs.device-codename }}"
-          echo "Check the build logs for details"
         else
-          echo "⚠️ Build status: ${{ needs.build.result }}"
+          echo "❌ Build failed"
+          echo "Check the build logs for details"
         fi
